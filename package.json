@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@azure/openai": "^2.0.0-beta.1",
+    "dotenv": "^16.4.5",
+    "enquirer": "^2.4.1",
+    "openai": "^4.56.0",
+    "source-map-loader": "^5.0.0",
+    "ts-loader": "^9.5.1"
+  }
+}
