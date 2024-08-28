@@ -37,6 +37,7 @@ export class QuickstartPlayground {
     private async callAI(inputMessageArray) {
         const result = await this.client.chat.completions.create({
             messages: inputMessageArray,
+            temperature: 0.001,
             model: "",
         });
 
@@ -114,7 +115,7 @@ Please format your output using the same file and folder format as the example. 
 
     async createProject(projectDescription) {
         console.log("Getting most similar project...");
-        const mostSimilarProjects = await this.getMostSimilarProjects(projectDescription, 2);
+        const mostSimilarProjects = await this.getMostSimilarProjects(projectDescription, 3);
 
         console.log("Getting dev container files...");
         const devContainerFiles = await this.getDevContainerFiles(projectDescription, mostSimilarProjects);
