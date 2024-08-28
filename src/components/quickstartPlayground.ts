@@ -1,12 +1,15 @@
 import { AzureOpenAI } from "openai";
+import { DocumentHandler } from "./documentHandler";
 
 export class QuickstartPlayground {
     private endpoint: string;
     private apiKey: string;
     private deployment: string;
     private embeddingsDeployment: string;
-    private client: AzureOpenAI;
     private apiVersion: string;
+    private client: AzureOpenAI;
+    private embeddingsClient: AzureOpenAI;
+    private documentHandler: DocumentHandler;
 
     constructor() {
         this.endpoint = process.env.AZURE_AI_ENDPOINT || "";
@@ -15,14 +18,23 @@ export class QuickstartPlayground {
         this.embeddingsDeployment = process.env.AZURE_AI_EMBEDDINGS_DEPLOYMENT || "";
         this.apiVersion = "2024-04-01-preview";
         const client = new AzureOpenAI({ endpoint: this.endpoint, apiKey: this.apiKey, apiVersion: this.apiVersion, deployment: this.deployment });
+        const embeddingsClient = new AzureOpenAI({ endpoint: this.endpoint, apiKey: this.apiKey, apiVersion: this.apiVersion, deployment: this.embeddingsDeployment });
         this.client = client;
+        this.embeddingsClient = embeddingsClient;
+
+        this.documentHandler = new DocumentHandler();
     }
 
-    getAzureOpenAIEmbeddings() {
-        return new AzureOpenAI({ endpoint: this.endpoint, apiKey: this.apiKey, apiVersion: this.apiVersion, deployment: this.embeddingsDeployment });
+    async setupExampleDocs() {
+        console.log("Exporting samples");
+        this.documentHandler.createProjectExportsFromSampleFolder();
+        console.log("Getting embeddings");
+        await this.documentHandler.getEmbeddingsForAllDocs(this.embeddingsClient);
+        console.log("Saving changes");
+        this.documentHandler.saveChanges();
     }
 
-    async callAI(inputMessageArray) {
+    private async callAI(inputMessageArray) {
         const result = await this.client.chat.completions.create({
             messages: inputMessageArray,
             model: "",
@@ -31,7 +43,25 @@ export class QuickstartPlayground {
         return result.choices[0].message.content;
     }
 
-    async getDevContainerFiles(projectDescription) {
+    private async getMostSimilarProjects(inputPrompt: string, numberOfProjects: number) {
+
+        let promptEmbeddingResponse = await this.embeddingsClient.embeddings.create({
+            model: "textembeddingsmall",
+            input: [inputPrompt],
+        });
+
+        let promptEmbedding = promptEmbeddingResponse.data[0].embedding;
+
+        let results = this.documentHandler.getMostSimilarDocs(promptEmbedding, numberOfProjects);
+        let returnArray = [];
+        for (let i = 0; i < numberOfProjects; i++) {
+            returnArray.push(results[i].doc);
+        }
+
+        return returnArray;
+    }
+
+    private async getDevContainerFiles(projectDescription, mostSimilarProjects: any[]) {
         let messages = [
             {
                 role: "system", content: `Your task is to create a VS Code Codespaces definition from a given prompt. You only need to output files for the .devcontainer folder, not source code for the app itself.
@@ -49,38 +79,50 @@ For example, do NOT put a \`COPY requirements.txt .\` line in the Dockerfile. Pu
 
 Please pick the best language and best tools and frameworks necessary to match the prompt.
 
-Output just the file names, and file contents and nothing else.` },
-            { role: "user", content: "Create a bitcoin price tracker using Python" },
-            { role: "assistant", content: "=== ./.devcontainer/devcontainer.json ===\n{\n    \"name\": \"Python 3 Bitcoin Price Tracker\",\n    \"build\": {\n        \"dockerfile\": \"Dockerfile\"\n    },\n    \"customizations\": {\n        // Configure properties specific to VS Code.\n        \"vscode\": {\n            \"settings\": {},\n            \"extensions\": [\n                \"ms-python.python\"\n            ]\n        }\n    },\n    \"postCreateCommand\": \"pip3 install -r requirements.txt\"\n}\n\n=== ./.devcontainer/Dockerfile ===\nFROM mcr.microsoft.com/devcontainers/base:ubuntu\n\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt update && \\\napt install -y python3-pip python3-tk" },
-            { role: "user", content: projectDescription },
+Output just the file names, and file contents and nothing else. Do not output any markdown.` },
         ];
+
+        for (let i = 0; i < mostSimilarProjects.length; i++) {
+            const project = mostSimilarProjects[i];
+            messages.push({ role: "user", content: project.prompt });
+            messages.push({ role: "assistant", content: project.codespaces });
+        }
+        messages.push({ role: "user", content: projectDescription });
 
         return await this.callAI(messages);
     }
 
-    async getStarterCode(projectDescription) {
+    private async getStarterCode(projectDescription, mostSimilarProjects: any[]) {
         let messages = [
             {
                 role: "system", content: `Your task is to create a VS Code Codespaces starting project for a repository given a sample prompt. You will be given the VS Code Spaces definition for your project for reference and an example prompt and example code. You will output the source code for the app itself to satisfy your given prompt. 
 
 The example is only shown as inspiration, you do not need to incorporate it.
 
-Please format your output using the same file and folder format as the example. Do not output anything besides the answer to the prompt.` },
-            { role: "user", content: "Create a bitcoin price tracker using Python" },
-            { role: "assistant", content: "\n\n=== ./price_tracker.py ===\nimport requests\n\nurl = 'https://api.coindesk.com/v1/bpi/currentprice.json'\n\nresponse = requests.get(url)\ndata = response.json()\n\nprint(\"Bitcoin Price: $\" + data['bpi']['USD']['rate'])\n\n=== ./requirements.txt ===\nrequests\n\n=== ./.vscode/launch.json ===\n{\n    \"version\": \"0.2.0\",\n    \"configurations\": [\n        {\n            \"name\": \"Python: Bitcoin Price Tracker\",\n            \"type\": \"python\",\n            \"request\": \"launch\",\n            \"program\": \"price_tracker.py\"\n        }\n    ]\n}" },
-            { role: "user", content: projectDescription },
+Please format your output using the same file and folder format as the example. Do not output anything besides the answer to the prompt.` }
         ];
+
+        for (let i = 0; i < mostSimilarProjects.length; i++) {
+            const project = mostSimilarProjects[i];
+            messages.push({ role: "user", content: project.prompt });
+            messages.push({ role: "assistant", content: project.code });
+        }
+        messages.push({ role: "user", content: projectDescription });
 
         return await this.callAI(messages);
     }
 
     async createProject(projectDescription) {
+        console.log("Getting most similar project...");
+        const mostSimilarProjects = await this.getMostSimilarProjects(projectDescription, 2);
 
-        // Get most similar project
-        const devContainerFiles = await this.getDevContainerFiles(projectDescription);
-        const starterCode = await this.getStarterCode(projectDescription);
+        console.log("Getting dev container files...");
+        const devContainerFiles = await this.getDevContainerFiles(projectDescription, mostSimilarProjects);
 
-        // Combine result and decipher into file structure
-        console.log("Done");
+        console.log("Getting starter code...");
+        const starterCode = await this.getStarterCode(projectDescription, mostSimilarProjects);
+
+        console.log("Creating project...");
+        this.documentHandler.createProjectFromString(devContainerFiles + "\n" + starterCode);
     }
 }

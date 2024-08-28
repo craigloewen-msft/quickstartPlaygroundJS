@@ -5,10 +5,11 @@
             "type": "node",
             "request": "launch",
             "name": "Launch Program",
-            "program": "${workspaceFolder}/src/setup.ts",
+            "program": "${workspaceFolder}/src/main.ts",
             "console": "integratedTerminal",
-            "preLaunchTask": "tsc: build - tsconfig.json",
+            "preLaunchTask": "npm: build",
             "sourceMaps": true,
+            "smartStep": true,
             "outFiles": [
                 "${workspaceFolder}/out/**/*.js"
             ]

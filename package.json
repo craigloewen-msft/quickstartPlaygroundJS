@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "start": "node out/main.js",
+    "setup" : "node out/setup.js",
+    "prestart": "npm run build",
+    "build": "rm -rf ./out && tsc"
+  },
   "dependencies": {
     "@azure/openai": "^2.0.0-beta.1",
     "dotenv": "^16.4.5",
