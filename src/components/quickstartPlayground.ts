@@ -1,5 +1,15 @@
 import { AzureOpenAI } from "openai";
 import { DocumentHandler } from "./documentHandler";
+import { prompt } from "enquirer";
+import { ChatCompletionCreateParams, ChatCompletionTool, FunctionDefinition } from "openai/resources";
+
+interface PromptResponse {
+    chatMessage: string;
+}
+
+interface ProjectDescriptionResponse {
+    projectDescription: string;
+}
 
 export class QuickstartPlayground {
     private endpoint: string;
@@ -42,6 +52,39 @@ export class QuickstartPlayground {
         });
 
         return result.choices[0].message.content;
+    }
+
+    private async callAIWithTools(inputMessageArray) {
+        const createDevProjectFunction: FunctionDefinition = {
+            name: "create_dev_project",
+            description: "Creates a developer project based on an input project description.",
+            parameters: {
+                type: 'object',
+                properties: {
+                    projectDescription: {
+                        type: "string",
+                        description: "The description of the project to create"
+                    }
+                },
+                required: ["projectDescription"]
+            }
+        };
+
+        const toolDefinition: ChatCompletionTool = {
+            type: "function",
+            function: createDevProjectFunction
+        }
+
+        const tools = [toolDefinition];
+
+        const result = await this.client.chat.completions.create({
+            messages: inputMessageArray,
+            temperature: 0.001,
+            model: "",
+            tools: tools
+        });
+
+        return result;
     }
 
     private async getMostSimilarProjects(inputPrompt: string, numberOfProjects: number) {
@@ -125,5 +168,95 @@ Please format your output using the same file and folder format as the example. 
 
         console.log("Creating project...");
         this.documentHandler.createProjectFromString(devContainerFiles + "\n" + starterCode);
+    }
+
+    async chatCreateProject() {
+
+        let chatMessages = [];
+
+        chatMessages.push({
+            role: "system",
+            content: `You are an agent that helps someone get started with a developer project quickly. 
+            
+# Instructions
+
+- The user will provide an initial description of what developer project they want to create.
+- You will ensure the project description will have these qualities:
+   - A chosen programming language and framework (Or specified that the best can be chosen)
+   - A basic goal and description. The app should be somewhat basic and shouldn't be too complicated.
+- If the user doesn't provide this info initially you will ask for it. 
+- If the user gives a project that you don't think is successful you will direct them to fix their prompt. 
+- Unsuccesful projects include:
+   - Too complicated or unrealistic. 
+   - Trying to run a command (like git clone).
+- When you have a successful prompt you will call the 'create_dev_project' function with the prompt.
+- If the user insists that they'd like to continue their project then let them.
+   
+# Examples 
+
+## Example 1
+
+### User
+I want to create a basic web app that uses React. The app will be a simple to do list.
+
+### Agent
+Call the create_dev_project function with the projectDescription: 'Create a simple to do list web application using React.'
+
+## Example 2
+
+### User
+git clone https://github.com/microsoft/wsl
+
+### Agent
+Please provide a description of the project you would like to create, this service cannot execute commands.
+
+## Example 3
+
+### User
+I want to create a neural network machine learning app that would develop a cyber security platform. 
+
+### Agent
+This service aims to develop simple example and getting started projects. Can you please provide a simpler project?
+
+## Example 4    
+
+### User
+Make a minesweeper game in Python
+
+### Agent
+Call the create_dev_project function with the projectDescription: 'Make a minesweeper game in Python.'`
+        });
+
+        let projectDescription = '';
+
+        console.log("AI Assistant:\nWhat kind of developer project would you like to create?");
+
+        while (projectDescription === '') {
+
+            let promptResponse: PromptResponse = await prompt({
+                type: 'input',
+                name: 'chatMessage',
+                message: 'Reply: ',
+            });
+
+            chatMessages.push({ role: "user", content: promptResponse.chatMessage });
+
+            let aiResponse = await this.callAIWithTools(chatMessages);
+
+            let toolCallExists = aiResponse.choices[0].message.tool_calls?.length;
+
+            if (toolCallExists) {
+                let jsonStringResponse: string = aiResponse.choices[0].message.tool_calls[0].function.arguments;
+                let jsonObjectResponse: ProjectDescriptionResponse = JSON.parse(jsonStringResponse);
+                projectDescription = jsonObjectResponse.projectDescription;
+
+            } else {
+                chatMessages.push({ role: "assistant", content: aiResponse.choices[0].message.content });
+                console.log("AI Assistant:\n" + aiResponse.choices[0].message.content);
+            }
+        }
+
+        console.log("AI Assistant:\nCreating a project with the following description: " + projectDescription);
+        this.createProject(projectDescription);
     }
 }
